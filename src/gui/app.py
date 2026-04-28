@@ -27,6 +27,7 @@ class ScienceGraphApp(ctk.CTk):
 
     def _build_ui(self):
         self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=0)
         self.grid_columnconfigure(1, weight=1)
 
         self._toolbar = Toolbar(
@@ -48,8 +49,9 @@ class ScienceGraphApp(ctk.CTk):
             self,
             on_select=self._on_select,
             on_change=self._on_element_change,
+            on_zoom_change=self._on_zoom_change,
         )
-        self._canvas.grid(row=0, column=1, sticky="nsew", padx=8, pady=8)
+        self._canvas.grid(row=0, column=1, sticky="nsew", padx=8, pady=(8, 0))
 
         self._props = PropertiesPanel(
             self,
@@ -57,6 +59,16 @@ class ScienceGraphApp(ctk.CTk):
             on_restyle=self._on_restyle,
         )
         self._props.grid(row=0, column=2, sticky="ns", padx=(0, 8), pady=8)
+
+        self._zoom_bar = ZoomBar(
+            self,
+            on_zoom_in=self._canvas.zoom_in,
+            on_zoom_out=self._canvas.zoom_out,
+            on_fit=self._canvas.zoom_fit,
+            on_set_zoom=self._canvas.set_zoom,
+        )
+        self._zoom_bar.grid(row=1, column=0, columnspan=3, sticky="ew",
+                            padx=8, pady=(2, 8))
 
     # ---------------------------------------------------------------- actions
 
@@ -217,6 +229,9 @@ class ScienceGraphApp(ctk.CTk):
         self._canvas.redraw()
         self._props.load(element)
 
+    def _on_zoom_change(self, factor: float):
+        self._zoom_bar.update(factor)
+
     def _on_restyle(self, element: Element):
         if not element.is_text:
             return
@@ -240,3 +255,41 @@ class ScienceGraphApp(ctk.CTk):
             self._props.load(element)
         except Exception as exc:
             messagebox.showerror("Error al re-renderizar texto", str(exc))
+
+
+class ZoomBar(ctk.CTkFrame):
+    PRESETS = [10, 25, 50, 75, 100, 125, 150, 200, 300, 400, 500]
+
+    def __init__(self, master, on_zoom_in, on_zoom_out, on_fit, on_set_zoom, **kwargs):
+        super().__init__(master, height=36, **kwargs)
+        self._on_set_zoom = on_set_zoom
+        self._zoom_var = ctk.StringVar(value="100%")
+
+        ctk.CTkButton(self, text="-", width=28, height=26,
+                      command=on_zoom_out).pack(side="left", padx=(8, 2), pady=4)
+
+        self._pct_menu = ctk.CTkOptionMenu(
+            self, variable=self._zoom_var, width=90, height=26,
+            values=[f"{p}%" for p in self.PRESETS],
+            command=self._on_preset_select,
+        )
+        self._pct_menu.pack(side="left", padx=2, pady=4)
+
+        ctk.CTkButton(self, text="+", width=28, height=26,
+                      command=on_zoom_in).pack(side="left", padx=(2, 12), pady=4)
+
+        ctk.CTkButton(self, text="Ajustar a vista", width=110, height=26,
+                      command=on_fit).pack(side="left", padx=4, pady=4)
+
+        ctk.CTkLabel(self, text="Ctrl + rueda para zoom",
+                     text_color="gray", font=ctk.CTkFont(size=11)).pack(side="right", padx=12)
+
+    def update(self, factor: float):
+        self._zoom_var.set(f"{factor * 100:.0f}%")
+
+    def _on_preset_select(self, value: str):
+        try:
+            pct = int(value.replace("%", ""))
+            self._on_set_zoom(pct / 100.0)
+        except ValueError:
+            pass

@@ -11,9 +11,13 @@ WORKSPACE_BG = "#1e1e1e"
 GRID_COLOR = "#2a2a2a"
 PAGE_SHADOW = "#111111"
 
+ZOOM_MIN = 0.1
+ZOOM_MAX = 5.0
+ZOOM_STEP = 0.1
+
 
 class CanvasWorkspace(tk.Frame):
-    def __init__(self, master, on_select=None, on_change=None, **kwargs):
+    def __init__(self, master, on_select=None, on_change=None, on_zoom_change=None, **kwargs):
         super().__init__(master, bg=WORKSPACE_BG, **kwargs)
 
         self._canvas = tk.Canvas(self, bg=WORKSPACE_BG, highlightthickness=0, cursor="crosshair")
@@ -25,14 +29,17 @@ class CanvasWorkspace(tk.Frame):
         self._vbar.pack(side=tk.RIGHT, fill=tk.Y)
         self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Page / lienzo settings
+        # Page / lienzo
         self.page_x: int = 40
         self.page_y: int = 40
         self.page_w: int = 1000
         self.page_h: int = 750
         self.page_bg: str = "#ffffff"
 
-        # Feature toggles
+        # Zoom
+        self._zoom: float = 1.0
+
+        # Toggles
         self.show_spacing: bool = False
         self.collision_enabled: bool = False
 
@@ -43,19 +50,64 @@ class CanvasWorkspace(tk.Frame):
         self._item_uid: dict[int, str] = {}
         self._drag_data: tuple | None = None
         self._resize_handle_idx: int | None = None
-        self._last_valid_pos: tuple[float, float] | None = None
 
         self.on_select = on_select
         self.on_change = on_change
+        self.on_zoom_change = on_zoom_change
 
         self._canvas.bind("<Button-1>", self._on_click)
         self._canvas.bind("<B1-Motion>", self._on_drag)
         self._canvas.bind("<ButtonRelease-1>", self._on_release)
         self._canvas.bind("<Button-3>", self._on_right_click)
         self._canvas.bind("<Delete>", self._on_delete_key)
+        self._canvas.bind("<Control-MouseWheel>", self._on_ctrl_scroll)
+        self._canvas.bind("<Control-Button-4>", lambda e: self.zoom_in())   # Linux
+        self._canvas.bind("<Control-Button-5>", lambda e: self.zoom_out())  # Linux
         self._canvas.focus_set()
 
         self.redraw()
+
+    # ------------------------------------------------------------------- zoom
+
+    @property
+    def zoom(self) -> float:
+        return self._zoom
+
+    def zoom_in(self):
+        self.set_zoom(self._zoom + ZOOM_STEP)
+
+    def zoom_out(self):
+        self.set_zoom(self._zoom - ZOOM_STEP)
+
+    def zoom_fit(self):
+        self._canvas.update_idletasks()
+        vw = self._canvas.winfo_width()
+        vh = self._canvas.winfo_height()
+        if vw < 2 or vh < 2:
+            return
+        pad = 60
+        scale_x = (vw - pad) / (self.page_w + self.page_x * 2)
+        scale_y = (vh - pad) / (self.page_h + self.page_y * 2)
+        self.set_zoom(min(scale_x, scale_y))
+
+    def set_zoom(self, factor: float):
+        self._zoom = max(ZOOM_MIN, min(ZOOM_MAX, round(factor, 2)))
+        self._update_scroll_region()
+        self.redraw()
+        if self.on_zoom_change:
+            self.on_zoom_change(self._zoom)
+
+    def _update_scroll_region(self):
+        z = self._zoom
+        w = int((self.page_w + self.page_x * 2 + 200) * z)
+        h = int((self.page_h + self.page_y * 2 + 200) * z)
+        self._canvas.configure(scrollregion=(0, 0, max(w, 800), max(h, 600)))
+
+    def _on_ctrl_scroll(self, event):
+        if event.delta > 0:
+            self.zoom_in()
+        else:
+            self.zoom_out()
 
     # ------------------------------------------------------------------ public
 
@@ -95,6 +147,7 @@ class CanvasWorkspace(tk.Frame):
 
     def set_page(self, w: int, h: int, bg: str):
         self.page_w, self.page_h, self.page_bg = w, h, bg
+        self._update_scroll_region()
         self.redraw()
 
     def bring_to_front(self, uid: str):
@@ -154,64 +207,77 @@ class CanvasWorkspace(tk.Frame):
             if self.show_spacing:
                 self._draw_spacing(self.selected)
 
+    def _s(self, v: float) -> int:
+        """World to screen coordinate."""
+        return int(v * self._zoom)
+
     def _draw_workspace(self):
-        for x in range(0, 4000, 40):
-            self._canvas.create_line(x, 0, x, 3000, fill=GRID_COLOR, tags="grid")
-        for y in range(0, 3000, 40):
-            self._canvas.create_line(0, y, 4000, y, fill=GRID_COLOR, tags="grid")
+        z = self._zoom
+        step = max(10, int(40 * z))
+        w = int(self._canvas.cget("scrollregion").split()[2]) if self._canvas.cget("scrollregion") else 4000
+        h = int(self._canvas.cget("scrollregion").split()[3]) if self._canvas.cget("scrollregion") else 3000
+        for x in range(0, w + step, step):
+            self._canvas.create_line(x, 0, x, h, fill=GRID_COLOR, tags="grid")
+        for y in range(0, h + step, step):
+            self._canvas.create_line(0, y, w, y, fill=GRID_COLOR, tags="grid")
 
     def _draw_page(self):
-        px, py = self.page_x, self.page_y
-        pw, ph = self.page_w, self.page_h
-        # shadow
-        self._canvas.create_rectangle(px + 4, py + 4, px + pw + 4, py + ph + 4,
+        z = self._zoom
+        px = self._s(self.page_x)
+        py = self._s(self.page_y)
+        pw = self._s(self.page_w)
+        ph = self._s(self.page_h)
+        shadow = 4
+        self._canvas.create_rectangle(px + shadow, py + shadow,
+                                      px + pw + shadow, py + ph + shadow,
                                       fill=PAGE_SHADOW, outline="", tags="page")
-        # page
         self._canvas.create_rectangle(px, py, px + pw, py + ph,
                                       fill=self.page_bg, outline="#555555", width=1, tags="page")
-        # size label
-        self._canvas.create_text(px + 4, py - 14, text=f"{pw} x {ph} px",
+        pct = int(self._zoom * 100)
+        self._canvas.create_text(px + 4, py - 16,
+                                  text=f"{self.page_w} x {self.page_h} px  |  {pct}%",
                                   anchor="w", fill="#666666", font=("Arial", 9), tags="page")
 
     def _draw_element(self, elem: Element):
-        display = elem.image.resize((max(1, int(elem.w)), max(1, int(elem.h))), Image.LANCZOS)
+        z = self._zoom
+        dw = max(1, int(elem.w * z))
+        dh = max(1, int(elem.h * z))
+        display = elem.image.resize((dw, dh), Image.LANCZOS)
         photo = ImageTk.PhotoImage(display)
         self._photos[elem.uid] = photo
-        item_id = self._canvas.create_image(int(elem.x), int(elem.y), anchor="nw", image=photo)
+        sx, sy = self._s(elem.x), self._s(elem.y)
+        item_id = self._canvas.create_image(sx, sy, anchor="nw", image=photo)
         self._item_uid[item_id] = elem.uid
 
         if elem.show_border:
-            self._canvas.create_rectangle(
-                elem.x, elem.y, elem.x2, elem.y2,
-                outline=elem.border_color, width=1, tags="border"
-            )
+            self._canvas.create_rectangle(sx, sy, self._s(elem.x2), self._s(elem.y2),
+                                          outline=elem.border_color, width=1, tags="border")
 
-        self._canvas.create_text(
-            int(elem.x) + 4, int(elem.y) + 4,
-            text=elem.name, anchor="nw",
-            font=("Arial", 9), fill="#cccccc", tags="label"
-        )
+        self._canvas.create_text(sx + 4, sy + 4, text=elem.name,
+                                  anchor="nw", font=("Arial", 9), fill="#cccccc", tags="label")
 
     def _draw_selection(self, elem: Element):
+        z = self._zoom
         pad = 2
-        self._canvas.create_rectangle(
-            elem.x - pad, elem.y - pad, elem.x2 + pad, elem.y2 + pad,
-            outline=SELECT_COLOR, width=2, dash=(6, 3), tags="selection"
-        )
-        for hx, hy in self._handle_positions(elem):
-            self._canvas.create_rectangle(
-                hx - HANDLE_SIZE // 2, hy - HANDLE_SIZE // 2,
-                hx + HANDLE_SIZE // 2, hy + HANDLE_SIZE // 2,
-                fill=SELECT_COLOR, outline="white", width=1, tags="handle"
-            )
+        sx, sy = self._s(elem.x) - pad, self._s(elem.y) - pad
+        ex, ey = self._s(elem.x2) + pad, self._s(elem.y2) + pad
+        self._canvas.create_rectangle(sx, sy, ex, ey,
+                                      outline=SELECT_COLOR, width=2, dash=(6, 3), tags="selection")
+        hs = HANDLE_SIZE
+        for hx, hy in self._handle_screen_positions(elem):
+            self._canvas.create_rectangle(hx - hs // 2, hy - hs // 2,
+                                          hx + hs // 2, hy + hs // 2,
+                                          fill=SELECT_COLOR, outline="white", width=1, tags="handle")
 
-    def _handle_positions(self, elem: Element) -> list[tuple]:
+    def _handle_world_positions(self, elem: Element) -> list[tuple]:
         x, y, x2, y2, cx, cy = elem.x, elem.y, elem.x2, elem.y2, elem.cx, elem.cy
-        return [
-            (x, y),  (cx, y),  (x2, y),
-            (x, cy),            (x2, cy),
-            (x, y2), (cx, y2), (x2, y2),
-        ]
+        return [(x, y), (cx, y), (x2, y),
+                (x, cy),          (x2, cy),
+                (x, y2), (cx, y2), (x2, y2)]
+
+    def _handle_screen_positions(self, elem: Element) -> list[tuple]:
+        return [(self._s(hx), self._s(hy))
+                for hx, hy in self._handle_world_positions(elem)]
 
     def _draw_spacing(self, elem: Element):
         gaps = nearest_gaps(elem, self.elements)
@@ -231,9 +297,11 @@ class CanvasWorkspace(tk.Frame):
                 self._arrow(elem.cx, elem.y, elem.cx, other.y2, f"{dist:.0f}px")
 
     def _arrow(self, x1, y1, x2, y2, label: str):
-        self._canvas.create_line(x1, y1, x2, y2, fill=SPACING_COLOR, width=2,
+        sx1, sy1 = self._s(x1), self._s(y1)
+        sx2, sy2 = self._s(x2), self._s(y2)
+        self._canvas.create_line(sx1, sy1, sx2, sy2, fill=SPACING_COLOR, width=2,
                                  arrow=tk.BOTH, arrowshape=(8, 10, 4), tags="spacing")
-        mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+        mx, my = (sx1 + sx2) / 2, (sy1 + sy2) / 2
         self._canvas.create_rectangle(mx - 22, my - 11, mx + 22, my + 11,
                                       fill="#2b2b2b", outline=SPACING_COLOR, tags="spacing")
         self._canvas.create_text(mx, my, text=label, fill=SPACING_COLOR,
@@ -241,17 +309,26 @@ class CanvasWorkspace(tk.Frame):
 
     # ------------------------------------------------------------------ events
 
+    def _wx(self, event) -> float:
+        """Canvas event x -> world x."""
+        return self._canvas.canvasx(event.x) / self._zoom
+
+    def _wy(self, event) -> float:
+        """Canvas event y -> world y."""
+        return self._canvas.canvasy(event.y) / self._zoom
+
     def _on_click(self, event):
-        cx, cy = self._canvas.canvasx(event.x), self._canvas.canvasy(event.y)
+        cx, cy = self._wx(event), self._wy(event)
         self._canvas.focus_set()
 
         if self.selected:
-            for i, (hx, hy) in enumerate(self._handle_positions(self.selected)):
-                if abs(cx - hx) <= HANDLE_SIZE and abs(cy - hy) <= HANDLE_SIZE:
+            for i, (hx, hy) in enumerate(self._handle_screen_positions(self.selected)):
+                ex = self._canvas.canvasx(event.x)
+                ey = self._canvas.canvasy(event.y)
+                if abs(ex - hx) <= HANDLE_SIZE and abs(ey - hy) <= HANDLE_SIZE:
                     self._resize_handle_idx = i
                     s = self.selected
                     self._drag_data = (cx, cy, s.x, s.y, s.w, s.h)
-                    self._last_valid_pos = (s.x, s.y)
                     return
 
         self._resize_handle_idx = None
@@ -260,7 +337,6 @@ class CanvasWorkspace(tk.Frame):
         if elem:
             self.select(elem)
             self._drag_data = (cx, cy, elem.x, elem.y, elem.w, elem.h)
-            self._last_valid_pos = (elem.x, elem.y)
         else:
             self.select(None)
             self._drag_data = None
@@ -268,7 +344,7 @@ class CanvasWorkspace(tk.Frame):
     def _on_drag(self, event):
         if not self._drag_data or not self.selected:
             return
-        cx, cy = self._canvas.canvasx(event.x), self._canvas.canvasy(event.y)
+        cx, cy = self._wx(event), self._wy(event)
         ox, oy, ex, ey, ew, eh = self._drag_data
         dx, dy = cx - ox, cy - oy
         s = self.selected
@@ -291,11 +367,8 @@ class CanvasWorkspace(tk.Frame):
             prev_x, prev_y = s.x, s.y
             s.x = ex + dx
             s.y = ey + dy
-
             if self.collision_enabled and self._has_collision(s):
                 s.x, s.y = prev_x, prev_y
-            else:
-                self._last_valid_pos = (s.x, s.y)
 
         self.redraw()
         if self.on_change:
@@ -304,13 +377,12 @@ class CanvasWorkspace(tk.Frame):
     def _on_release(self, event):
         self._drag_data = None
         self._resize_handle_idx = None
-        self._last_valid_pos = None
 
     def _on_delete_key(self, event):
         self.remove_selected()
 
     def _on_right_click(self, event):
-        cx, cy = self._canvas.canvasx(event.x), self._canvas.canvasy(event.y)
+        cx, cy = self._wx(event), self._wy(event)
         elem = self._find_element_at(cx, cy)
         if not elem:
             return
@@ -331,14 +403,11 @@ class CanvasWorkspace(tk.Frame):
         return None
 
     def _has_collision(self, moving: Element) -> bool:
-        return any(
-            moving.overlaps(other)
-            for other in self.elements
-            if other.uid != moving.uid
-        )
+        return any(moving.overlaps(other)
+                   for other in self.elements if other.uid != moving.uid)
 
 
 def _hex_to_rgba(hex_color: str) -> tuple:
-    hex_color = hex_color.lstrip("#")
-    r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
     return (r, g, b, 255)
