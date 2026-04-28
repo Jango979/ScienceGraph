@@ -129,6 +129,54 @@ class PreviewDialog(ctk.CTkToplevel):
         ctk.CTkButton(self, text="Cerrar", command=self.destroy).pack(pady=10)
 
 
+class DistributeDialog(ctk.CTkToplevel):
+    def __init__(self, master, n_selected: int):
+        super().__init__(master)
+        self.title("Distribuir elementos")
+        self.geometry("360x280")
+        self.resizable(False, False)
+        self.grab_set()
+        self.result: dict | None = None
+
+        info = f"{n_selected} elementos seleccionados (Shift+click)" if n_selected > 1 \
+               else "Sin seleccion multiple: se usaran todos los elementos del canvas"
+        ctk.CTkLabel(self, text=info, text_color="gray",
+                     font=ctk.CTkFont(size=11), wraplength=320).pack(pady=(14, 6), padx=16)
+
+        ctk.CTkLabel(self, text="Modo de distribucion:").pack(padx=16, anchor="w")
+        self._mode_var = ctk.StringVar(value="horizontal")
+        for val, lbl in [("horizontal", "Horizontal (izquierda a derecha)"),
+                         ("vertical",   "Vertical (arriba a abajo)"),
+                         ("grid",       "Cuadricula (izq. a der., luego nueva fila)")]:
+            ctk.CTkRadioButton(self, text=lbl, variable=self._mode_var, value=val).pack(
+                padx=24, anchor="w", pady=1)
+
+        gap_row = ctk.CTkFrame(self, fg_color="transparent")
+        gap_row.pack(fill="x", padx=16, pady=10)
+        ctk.CTkLabel(gap_row, text="Gap X (px):").pack(side="left")
+        self._gx_var = ctk.StringVar(value="10")
+        ctk.CTkEntry(gap_row, textvariable=self._gx_var, width=65).pack(side="left", padx=4)
+        ctk.CTkLabel(gap_row, text="  Gap Y (px):").pack(side="left")
+        self._gy_var = ctk.StringVar(value="10")
+        ctk.CTkEntry(gap_row, textvariable=self._gy_var, width=65).pack(side="left", padx=4)
+
+        btn_row = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row.pack(pady=6)
+        ctk.CTkButton(btn_row, text="Cancelar", width=100,
+                      fg_color="gray", command=self.destroy).pack(side="left", padx=6)
+        ctk.CTkButton(btn_row, text="Distribuir", width=100,
+                      command=self._accept).pack(side="left", padx=6)
+
+    def _accept(self):
+        try:
+            gx = float(self._gx_var.get())
+            gy = float(self._gy_var.get())
+        except ValueError:
+            gx, gy = 10.0, 10.0
+        self.result = {"mode": self._mode_var.get(), "gap_x": gx, "gap_y": gy}
+        self.destroy()
+
+
 class ExportDialog(ctk.CTkToplevel):
     def __init__(self, master):
         super().__init__(master)

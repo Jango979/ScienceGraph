@@ -4,10 +4,11 @@ from src.core.latex_renderer import FONT_FAMILIES
 
 
 class PropertiesPanel(ctk.CTkScrollableFrame):
-    def __init__(self, master, on_update=None, on_restyle=None, **kwargs):
+    def __init__(self, master, on_update=None, on_restyle=None, on_set_spacing=None, **kwargs):
         super().__init__(master, width=230, **kwargs)
         self.on_update = on_update
         self.on_restyle = on_restyle
+        self.on_set_spacing = on_set_spacing
         self._element: Element | None = None
         self._updating = False
         self._text_widgets: list = []
@@ -104,6 +105,26 @@ class PropertiesPanel(ctk.CTkScrollableFrame):
         fce.pack(fill="x")
         fce.bind("<Return>", lambda _: self._push_restyle())
         fce.bind("<FocusOut>", lambda _: self._push_restyle())
+
+        # Spacing section (visible when guides active)
+        self._spacing_section_label = self._section("Separacion a vecinos", hidden=True)
+        self._spacing_frame = ctk.CTkFrame(self, fg_color="transparent")
+
+        dirs = [("Derecha", "right"), ("Izquierda", "left"),
+                ("Abajo", "bottom"), ("Arriba", "top")]
+        self._spacing_vars: dict[str, ctk.StringVar] = {}
+        self._spacing_active: dict[str, bool] = {}
+        for label_text, key in dirs:
+            row = ctk.CTkFrame(self._spacing_frame, fg_color="transparent")
+            row.pack(fill="x", pady=1)
+            ctk.CTkLabel(row, text=f"{label_text}:", width=68, anchor="w").pack(side="left")
+            var = ctk.StringVar(value="---")
+            self._spacing_vars[key] = var
+            entry = ctk.CTkEntry(row, textvariable=var, width=70)
+            entry.pack(side="left", padx=2)
+            entry.bind("<Return>", lambda _, k=key: self._push_spacing(k))
+            ctk.CTkLabel(row, text="px").pack(side="left")
+            self._spacing_active[key] = False
 
         self.load(None)
 
@@ -244,6 +265,37 @@ class PropertiesPanel(ctk.CTkScrollableFrame):
             self._notify()
         except ValueError:
             pass
+
+    def update_spacing(self, gaps: dict | None):
+        """Called by app when spacing guides are active. gaps = nearest_gaps() result or None."""
+        if gaps is None or not self._element:
+            self._spacing_section_label.pack_forget()
+            self._spacing_frame.pack_forget()
+            for key in self._spacing_vars:
+                self._spacing_vars[key].set("---")
+                self._spacing_active[key] = False
+            return
+
+        self._spacing_section_label.pack(pady=(10, 2), padx=10, anchor="w")
+        self._spacing_frame.pack(fill="x", padx=10, pady=2)
+
+        for key, gap in gaps.items():
+            if gap is not None and gap[0] >= 0:
+                self._spacing_vars[key].set(f"{gap[0]:.0f}")
+                self._spacing_active[key] = True
+            else:
+                self._spacing_vars[key].set("---")
+                self._spacing_active[key] = False
+
+    def _push_spacing(self, direction: str):
+        if not self._spacing_active.get(direction):
+            return
+        try:
+            val = float(self._spacing_vars[direction].get())
+        except ValueError:
+            return
+        if self.on_set_spacing:
+            self.on_set_spacing(direction, val)
 
     def _notify(self):
         if self.on_update:

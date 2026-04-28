@@ -10,7 +10,8 @@ from src.core.latex_renderer import render_latex, render_text
 from src.gui.canvas_workspace import CanvasWorkspace
 from src.gui.toolbar import Toolbar
 from src.gui.properties import PropertiesPanel
-from src.gui.dialogs import TextDialog, CanvasSettingsDialog, PreviewDialog, ExportDialog
+from src.gui.dialogs import TextDialog, CanvasSettingsDialog, PreviewDialog, ExportDialog, DistributeDialog
+from src.core.spacing import nearest_gaps
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -41,6 +42,7 @@ class ScienceGraphApp(ctk.CTk):
             on_preview=self._preview,
             on_copy_style=self._copy_style,
             on_paste_style=self._paste_style,
+            on_distribute=self._distribute,
             on_export=self._export,
         )
         self._toolbar.grid(row=0, column=0, sticky="ns", padx=(8, 0), pady=8)
@@ -57,6 +59,7 @@ class ScienceGraphApp(ctk.CTk):
             self,
             on_update=self._on_props_update,
             on_restyle=self._on_restyle,
+            on_set_spacing=self._on_set_spacing,
         )
         self._props.grid(row=0, column=2, sticky="ns", padx=(0, 8), pady=8)
 
@@ -143,6 +146,19 @@ class ScienceGraphApp(ctk.CTk):
     def _toggle_spacing(self):
         self._canvas.toggle_spacing()
         self._toolbar.set_spacing_state(self._canvas.show_spacing)
+        self._update_props_spacing()
+
+    def _distribute(self):
+        n = len(self._canvas.multi_select)
+        dlg = DistributeDialog(self, n)
+        self.wait_window(dlg)
+        if not dlg.result:
+            return
+        targets = self._canvas.multi_select if n > 1 else self._canvas.elements
+        if not targets:
+            return
+        self._canvas.distribute(targets, dlg.result["gap_x"], dlg.result["gap_y"],
+                                 dlg.result["mode"])
 
     def _toggle_collision(self):
         self._canvas.toggle_collision()
@@ -221,16 +237,47 @@ class ScienceGraphApp(ctk.CTk):
 
     def _on_select(self, element: Element | None):
         self._props.load(element)
+        self._update_props_spacing()
 
     def _on_element_change(self, element: Element):
         self._props.load(element)
+        self._update_props_spacing()
 
     def _on_props_update(self, element: Element):
         self._canvas.redraw()
         self._props.load(element)
+        self._update_props_spacing()
 
     def _on_zoom_change(self, factor: float):
         self._zoom_bar.update(factor)
+
+    def _update_props_spacing(self):
+        if not self._canvas.show_spacing or not self._canvas.selected:
+            self._props.update_spacing(None)
+            return
+        gaps = nearest_gaps(self._canvas.selected, self._canvas.elements)
+        self._props.update_spacing(gaps)
+
+    def _on_set_spacing(self, direction: str, distance: float):
+        selected = self._canvas.selected
+        if not selected:
+            return
+        gaps = nearest_gaps(selected, self._canvas.elements)
+        gap = gaps.get(direction)
+        if gap is None or gap[0] < 0:
+            return
+        _, other = gap
+        if direction == "right":
+            selected.x = other.x - distance - selected.w
+        elif direction == "left":
+            selected.x = other.x2 + distance
+        elif direction == "bottom":
+            selected.y = other.y - distance - selected.h
+        elif direction == "top":
+            selected.y = other.y2 + distance
+        self._canvas.redraw()
+        self._props.load(selected)
+        self._update_props_spacing()
 
     def _on_restyle(self, element: Element):
         if not element.is_text:

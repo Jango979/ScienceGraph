@@ -4,17 +4,17 @@ import customtkinter as ctk
 class Toolbar(ctk.CTkFrame):
     def __init__(self, master, on_add_image, on_add_text, on_add_latex,
                  on_toggle_spacing, on_toggle_collision, on_canvas_settings,
-                 on_preview, on_copy_style, on_paste_style, on_export, **kwargs):
+                 on_preview, on_copy_style, on_paste_style, on_distribute, on_export, **kwargs):
         super().__init__(master, width=104, **kwargs)
         self._spacing_btn: ctk.CTkButton | None = None
         self._collision_btn: ctk.CTkButton | None = None
         self._build(on_add_image, on_add_text, on_add_latex,
                     on_toggle_spacing, on_toggle_collision, on_canvas_settings,
-                    on_preview, on_copy_style, on_paste_style, on_export)
+                    on_preview, on_copy_style, on_paste_style, on_distribute, on_export)
 
     def _build(self, on_add_image, on_add_text, on_add_latex,
                on_toggle_spacing, on_toggle_collision, on_canvas_settings,
-               on_preview, on_copy_style, on_paste_style, on_export):
+               on_preview, on_copy_style, on_paste_style, on_distribute, on_export):
         self._section("Agregar")
         self._btn("Imagen", on_add_image)
         self._btn("Texto", on_add_text)
@@ -28,9 +28,10 @@ class Toolbar(ctk.CTkFrame):
         self._section("Lienzo")
         self._btn("Configurar", on_canvas_settings)
 
-        self._section("Estilo")
+        self._section("Edicion")
         self._btn("Copiar\nestilo", on_copy_style)
         self._btn("Pegar\nestilo", on_paste_style)
+        self._btn("Distribuir", on_distribute)
 
         self._section("Archivo")
         self._btn("Exportar", on_export, color="#2d7a2d")
