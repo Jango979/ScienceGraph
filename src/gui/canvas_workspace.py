@@ -5,15 +5,15 @@ from src.core.element import Element
 from src.core.spacing import nearest_gaps
 
 HANDLE_SIZE = 8
-SELECT_COLOR = "#4a9eff"
-MULTI_COLOR  = "#ff6b6b"
+SELECT_COLOR  = "#4a9eff"
+MULTI_COLOR   = "#ff6b6b"
 SPACING_COLOR = "#ff9900"
-WORKSPACE_BG = "#1e1e1e"
-GRID_COLOR = "#2a2a2a"
-PAGE_SHADOW = "#111111"
+WORKSPACE_BG  = "#1e1e1e"
+GRID_COLOR    = "#2a2a2a"
+PAGE_SHADOW   = "#111111"
 
-ZOOM_MIN = 0.1
-ZOOM_MAX = 5.0
+ZOOM_MIN  = 0.1
+ZOOM_MAX  = 5.0
 ZOOM_STEP = 0.1
 
 
@@ -40,33 +40,39 @@ class CanvasWorkspace(tk.Frame):
         self._zoom: float = 1.0
 
         # Toggles
-        self.show_spacing: bool = False
+        self.show_spacing:    bool = False
         self.collision_enabled: bool = False
 
         self.elements: list[Element] = []
         self.selected: Element | None = None
-        self._multi_select: list[Element] = []   # shift+click set
+        self._multi_select: list[Element] = []
 
         self._photos: dict[str, ImageTk.PhotoImage] = {}
         self._drag_data: tuple | None = None
         self._resize_handle_idx: int | None = None
 
-        self.on_select = on_select
-        self.on_change = on_change
+        self.on_select     = on_select
+        self.on_change     = on_change
         self.on_zoom_change = on_zoom_change
 
-        self._canvas.bind("<Button-1>", self._on_click)
-        self._canvas.bind("<B1-Motion>", self._on_drag)
-        self._canvas.bind("<ButtonRelease-1>", self._on_release)
-        self._canvas.bind("<Button-3>", self._on_right_click)
-        self._canvas.bind("<Delete>", self._on_delete_key)
-        self._canvas.bind("<Control-MouseWheel>", self._on_ctrl_scroll)
-        self._canvas.bind("<Control-Button-4>", lambda e: self.zoom_in())
-        self._canvas.bind("<Control-Button-5>", lambda e: self.zoom_out())
-        self._canvas.focus_set()
+        c = self._canvas
+        c.bind("<Button-1>",           self._on_click)
+        c.bind("<B1-Motion>",          self._on_drag)
+        c.bind("<ButtonRelease-1>",    self._on_release)
+        c.bind("<Button-3>",           self._on_right_click)
+        c.bind("<Delete>",             self._on_delete_key)
+        # Zoom with Ctrl
+        c.bind("<Control-MouseWheel>", self._on_ctrl_scroll)
+        c.bind("<Control-Button-4>",   lambda e: self.zoom_in())
+        c.bind("<Control-Button-5>",   lambda e: self.zoom_out())
+        # Scroll without Ctrl
+        c.bind("<MouseWheel>",         self._on_scroll_v)
+        c.bind("<Shift-MouseWheel>",   self._on_scroll_h)
+        c.bind("<Button-4>",           self._on_scroll_v)
+        c.bind("<Button-5>",           self._on_scroll_v)
+        c.focus_set()
 
-        # Center page after first layout
-        self.after(50, self._initial_center)
+        self.after(60, self._initial_center)
 
     def _initial_center(self):
         self._update_scroll_region()
@@ -95,19 +101,18 @@ class CanvasWorkspace(tk.Frame):
         scale_x = (vw - pad) / (self.page_w + self.page_x * 2)
         scale_y = (vh - pad) / (self.page_h + self.page_y * 2)
         self.set_zoom(min(scale_x, scale_y))
-        self._center_on_page()
 
     def set_zoom(self, factor: float):
         self._zoom = max(ZOOM_MIN, min(ZOOM_MAX, round(factor, 2)))
         self._update_scroll_region()
         self.redraw()
-        self._center_on_page()
+        self.after(15, self._center_on_page)
         if self.on_zoom_change:
             self.on_zoom_change(self._zoom)
 
     def _update_scroll_region(self):
         z = self._zoom
-        margin = 200
+        margin = 300
         w = int((self.page_w + self.page_x * 2 + margin) * z)
         h = int((self.page_h + self.page_y * 2 + margin) * z)
         self._canvas.configure(scrollregion=(0, 0, max(w, 800), max(h, 600)))
@@ -121,8 +126,11 @@ class CanvasWorkspace(tk.Frame):
         sr = self._canvas.cget("scrollregion")
         if not sr:
             return
-        parts = sr.split()
-        total_w, total_h = float(parts[2]), float(parts[3])
+        try:
+            parts = str(sr).split()
+            total_w, total_h = float(parts[2]), float(parts[3])
+        except (IndexError, ValueError):
+            return
         if total_w <= 0 or total_h <= 0:
             return
         z = self._zoom
@@ -139,11 +147,22 @@ class CanvasWorkspace(tk.Frame):
         else:
             self.zoom_out()
 
-    # -------------------------------------------------------------- selection
+    def _on_scroll_v(self, event):
+        # Windows: event.delta; Linux: Button-4/5
+        if hasattr(event, "delta") and event.delta != 0:
+            units = -1 if event.delta > 0 else 1
+        elif event.num == 4:
+            units = -1
+        elif event.num == 5:
+            units = 1
+        else:
+            return
+        self._canvas.yview_scroll(units * 3, "units")
 
-    @property
-    def multi_select(self) -> list[Element]:
-        return list(self._multi_select)
+    def _on_scroll_h(self, event):
+        if hasattr(event, "delta") and event.delta != 0:
+            units = -1 if event.delta > 0 else 1
+            self._canvas.xview_scroll(units * 3, "units")
 
     # ------------------------------------------------------------------ public
 
@@ -153,7 +172,7 @@ class CanvasWorkspace(tk.Frame):
         self.select(elem)
 
     def remove_selected(self):
-        to_remove = {e.uid for e in self._multi_select} if self._multi_select else set()
+        to_remove = {e.uid for e in self._multi_select}
         if self.selected:
             to_remove.add(self.selected.uid)
         if not to_remove:
@@ -176,6 +195,7 @@ class CanvasWorkspace(tk.Frame):
 
     def select(self, elem: Element | None):
         self.selected = elem
+        self._multi_select = [elem] if elem else []
         self.redraw()
         if self.on_select:
             self.on_select(elem)
@@ -191,7 +211,8 @@ class CanvasWorkspace(tk.Frame):
         self.page_w, self.page_h, self.page_bg = w, h, bg
         self._update_scroll_region()
         self.redraw()
-        self._center_on_page()
+        # Delay to let tkinter process the new scroll region before centering
+        self.after(30, self._center_on_page)
 
     def bring_to_front(self, uid: str):
         idx = next((i for i, e in enumerate(self.elements) if e.uid == uid), None)
@@ -205,14 +226,13 @@ class CanvasWorkspace(tk.Frame):
             self.elements.insert(0, self.elements.pop(idx))
             self.redraw()
 
+    @property
+    def multi_select(self) -> list[Element]:
+        return list(self._multi_select)
+
     def distribute(self, targets: list[Element], gap_x: float, gap_y: float, mode: str):
-        """
-        mode: 'horizontal' | 'vertical' | 'grid'
-        Distributes elements with specified gaps, clamped to page bounds.
-        """
         if len(targets) < 2:
             return
-
         px, py = float(self.page_x), float(self.page_y)
         pw, ph = float(self.page_w), float(self.page_h)
 
@@ -232,18 +252,18 @@ class CanvasWorkspace(tk.Frame):
 
         elif mode == "grid":
             elems = sorted(targets, key=lambda e: (e.y, e.x))
-            cursor_x = elems[0].x
-            cursor_y = elems[0].y
-            row_height = 0.0
+            cursor_x = float(px)
+            cursor_y = elems[0].y if elems else float(py)
+            row_h = 0.0
             for e in elems:
-                if cursor_x + e.w > px + pw and cursor_x > elems[0].x:
-                    cursor_x = elems[0].x
-                    cursor_y += row_height + gap_y
-                    row_height = 0.0
+                if cursor_x + e.w > px + pw and cursor_x > px:
+                    cursor_x = px
+                    cursor_y += row_h + gap_y
+                    row_h = 0.0
                 e.x = min(cursor_x, px + pw - e.w)
                 e.y = min(cursor_y, py + ph - e.h)
                 cursor_x = e.x + e.w + gap_x
-                row_height = max(row_height, e.h)
+                row_h = max(row_h, e.h)
 
         self.redraw()
         if self.on_change and self.selected:
@@ -251,7 +271,7 @@ class CanvasWorkspace(tk.Frame):
 
     def get_composite(self, page_only: bool = False) -> Image.Image:
         if not self.elements:
-            return Image.new("RGBA", (self.page_w, self.page_h), (255, 255, 255, 255))
+            return Image.new("RGBA", (self.page_w, self.page_h), _hex_to_rgba(self.page_bg))
 
         if page_only:
             cw, ch = self.page_w, self.page_h
@@ -263,8 +283,7 @@ class CanvasWorkspace(tk.Frame):
             ch = int(max(e.y2 for e in self.elements) - min_y)
             ox, oy = min_x, min_y
 
-        bg = _hex_to_rgba(self.page_bg)
-        composite = Image.new("RGBA", (max(cw, 1), max(ch, 1)), bg)
+        composite = Image.new("RGBA", (max(cw, 1), max(ch, 1)), _hex_to_rgba(self.page_bg))
         for elem in self.elements:
             img = elem.image.resize((max(1, int(elem.w)), max(1, int(elem.h))), Image.LANCZOS)
             x, y = int(elem.x - ox), int(elem.y - oy)
@@ -286,7 +305,6 @@ class CanvasWorkspace(tk.Frame):
         for elem in self.elements:
             self._draw_element(elem)
 
-        # Multi-selection outlines
         primary_uid = self.selected.uid if self.selected else None
         for elem in self._multi_select:
             if elem.uid != primary_uid:
@@ -304,10 +322,10 @@ class CanvasWorkspace(tk.Frame):
         z = self._zoom
         step = max(10, int(40 * z))
         sr = self._canvas.cget("scrollregion")
-        if sr:
-            parts = sr.split()
+        try:
+            parts = str(sr).split()
             tw, th = int(parts[2]), int(parts[3])
-        else:
+        except (IndexError, ValueError):
             tw, th = 4000, 3000
         for x in range(0, tw + step, step):
             self._canvas.create_line(x, 0, x, th, fill=GRID_COLOR, tags="grid")
@@ -317,7 +335,7 @@ class CanvasWorkspace(tk.Frame):
     def _draw_page(self):
         px, py = self._s(self.page_x), self._s(self.page_y)
         pw, ph = self._s(self.page_w), self._s(self.page_h)
-        sd = 5
+        sd = 6
         self._canvas.create_rectangle(px + sd, py + sd, px + pw + sd, py + ph + sd,
                                       fill=PAGE_SHADOW, outline="", tags="page")
         self._canvas.create_rectangle(px, py, px + pw, py + ph,
@@ -329,14 +347,12 @@ class CanvasWorkspace(tk.Frame):
 
     def _draw_element(self, elem: Element):
         z = self._zoom
-        dw = max(1, int(elem.w * z))
-        dh = max(1, int(elem.h * z))
+        dw, dh = max(1, int(elem.w * z)), max(1, int(elem.h * z))
         display = elem.image.resize((dw, dh), Image.LANCZOS)
         photo = ImageTk.PhotoImage(display)
         self._photos[elem.uid] = photo
         sx, sy = self._s(elem.x), self._s(elem.y)
         self._canvas.create_image(sx, sy, anchor="nw", image=photo)
-
         if elem.show_border:
             self._canvas.create_rectangle(sx, sy, self._s(elem.x2), self._s(elem.y2),
                                           outline=elem.border_color, width=1, tags="border")
@@ -367,7 +383,7 @@ class CanvasWorkspace(tk.Frame):
     def _handle_world_pos(self, elem: Element) -> list[tuple]:
         x, y, x2, y2, cx, cy = elem.x, elem.y, elem.x2, elem.y2, elem.cx, elem.cy
         return [(x, y), (cx, y), (x2, y),
-                (x, cy),          (x2, cy),
+                (x, cy),           (x2, cy),
                 (x, y2), (cx, y2), (x2, y2)]
 
     def _handle_screen_pos(self, elem: Element) -> list[tuple]:
@@ -380,13 +396,13 @@ class CanvasWorkspace(tk.Frame):
                 continue
             dist, other = gap
             if direction == "right":
-                self._arrow(elem.x2, elem.cy, other.x, elem.cy, f"{dist:.0f}px")
+                self._arrow(elem.x2, elem.cy, other.x,  elem.cy,  f"{dist:.0f}px")
             elif direction == "left":
-                self._arrow(elem.x, elem.cy, other.x2, elem.cy, f"{dist:.0f}px")
+                self._arrow(elem.x,  elem.cy, other.x2, elem.cy,  f"{dist:.0f}px")
             elif direction == "bottom":
-                self._arrow(elem.cx, elem.y2, elem.cx, other.y, f"{dist:.0f}px")
+                self._arrow(elem.cx, elem.y2, elem.cx,  other.y,  f"{dist:.0f}px")
             elif direction == "top":
-                self._arrow(elem.cx, elem.y, elem.cx, other.y2, f"{dist:.0f}px")
+                self._arrow(elem.cx, elem.y,  elem.cx,  other.y2, f"{dist:.0f}px")
 
     def _arrow(self, x1, y1, x2, y2, label: str):
         sx1, sy1 = self._s(x1), self._s(y1)
@@ -412,7 +428,7 @@ class CanvasWorkspace(tk.Frame):
         self._canvas.focus_set()
         shift = bool(event.state & 0x0001)
 
-        # Check resize handle on primary selection
+        # Resize handle on primary selection (only without shift)
         if self.selected and not shift:
             for i, (hx, hy) in enumerate(self._handle_screen_pos(self.selected)):
                 ex = self._canvas.canvasx(event.x)
@@ -426,24 +442,35 @@ class CanvasWorkspace(tk.Frame):
         self._resize_handle_idx = None
         elem = self._find_element_at(cx, cy)
 
-        if shift and elem:
-            # Toggle in multi-select
-            uids = [e.uid for e in self._multi_select]
-            if elem.uid in uids:
-                self._multi_select = [e for e in self._multi_select if e.uid != elem.uid]
-            else:
-                self._multi_select.append(elem)
+        if shift:
+            if elem:
+                # Make sure current primary selection is in multi_select
+                if self.selected and not any(e.uid == self.selected.uid for e in self._multi_select):
+                    self._multi_select.append(self.selected)
+                # Toggle clicked element
+                uids = {e.uid for e in self._multi_select}
+                if elem.uid in uids:
+                    self._multi_select = [e for e in self._multi_select if e.uid != elem.uid]
+                    self.selected = self._multi_select[-1] if self._multi_select else None
+                else:
+                    self._multi_select.append(elem)
+                    self.selected = elem
+                self.redraw()
+                if self.on_select:
+                    self.on_select(self.selected)
+        elif elem:
+            self._multi_select = [elem]
             self.selected = elem
             self.redraw()
             if self.on_select:
                 self.on_select(elem)
-        elif elem:
-            self._multi_select = [elem]
-            self.select(elem)
             self._drag_data = (cx, cy, elem.x, elem.y, elem.w, elem.h)
         else:
             self._multi_select = []
-            self.select(None)
+            self.selected = None
+            self.redraw()
+            if self.on_select:
+                self.on_select(None)
             self._drag_data = None
 
     def _on_drag(self, event):
@@ -456,25 +483,19 @@ class CanvasWorkspace(tk.Frame):
 
         if self._resize_handle_idx is not None:
             h = self._resize_handle_idx
-            new_x, new_y, new_w, new_h = ex, ey, ew, eh
-            if h in (0, 3, 5):
-                new_x = ex + dx; new_w = max(20, ew - dx)
-            if h in (2, 4, 7):
-                new_w = max(20, ew + dx)
-            if h in (0, 1, 2):
-                new_y = ey + dy; new_h = max(20, eh - dy)
-            if h in (5, 6, 7):
-                new_h = max(20, eh + dy)
-            s.x, s.y, s.w, s.h = new_x, new_y, new_w, new_h
+            nx, ny, nw, nh = ex, ey, ew, eh
+            if h in (0, 3, 5): nx = ex + dx; nw = max(20, ew - dx)
+            if h in (2, 4, 7): nw = max(20, ew + dx)
+            if h in (0, 1, 2): ny = ey + dy; nh = max(20, eh - dy)
+            if h in (5, 6, 7): nh = max(20, eh + dy)
+            s.x, s.y, s.w, s.h = nx, ny, nw, nh
         else:
             prev_x, prev_y = s.x, s.y
             s.x = ex + dx
             s.y = ey + dy
             if self.collision_enabled:
-                # Clamp to page
                 s.x = max(float(self.page_x), min(s.x, self.page_x + self.page_w - s.w))
                 s.y = max(float(self.page_y), min(s.y, self.page_y + self.page_h - s.h))
-                # Clamp element-element
                 if self._has_collision(s):
                     s.x, s.y = prev_x, prev_y
 
@@ -497,7 +518,7 @@ class CanvasWorkspace(tk.Frame):
         self.select(elem)
         menu = tk.Menu(self._canvas, tearoff=0)
         menu.add_command(label="Traer al frente", command=lambda: self.bring_to_front(elem.uid))
-        menu.add_command(label="Enviar al fondo", command=lambda: self.send_to_back(elem.uid))
+        menu.add_command(label="Enviar al fondo",  command=lambda: self.send_to_back(elem.uid))
         menu.add_separator()
         menu.add_command(label="Duplicar", command=lambda: self.add_element(elem.duplicate()))
         menu.add_separator()
