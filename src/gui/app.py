@@ -10,7 +10,7 @@ from src.core.latex_renderer import render_latex, render_text
 from src.gui.canvas_workspace import CanvasWorkspace
 from src.gui.toolbar import Toolbar
 from src.gui.properties import PropertiesPanel
-from src.gui.dialogs import TextDialog, ExportDialog
+from src.gui.dialogs import TextDialog, CanvasSettingsDialog, PreviewDialog, ExportDialog
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -20,8 +20,8 @@ class ScienceGraphApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("ScienceGraph")
-        self.geometry("1380x820")
-        self.minsize(1050, 650)
+        self.geometry("1420x860")
+        self.minsize(1100, 680)
         self._clipboard_style: dict | None = None
         self._build_ui()
 
@@ -35,6 +35,9 @@ class ScienceGraphApp(ctk.CTk):
             on_add_text=self._add_text,
             on_add_latex=self._add_latex,
             on_toggle_spacing=self._toggle_spacing,
+            on_toggle_collision=self._toggle_collision,
+            on_canvas_settings=self._canvas_settings,
+            on_preview=self._preview,
             on_copy_style=self._copy_style,
             on_paste_style=self._paste_style,
             on_export=self._export,
@@ -48,7 +51,11 @@ class ScienceGraphApp(ctk.CTk):
         )
         self._canvas.grid(row=0, column=1, sticky="nsew", padx=8, pady=8)
 
-        self._props = PropertiesPanel(self, on_update=self._on_props_update)
+        self._props = PropertiesPanel(
+            self,
+            on_update=self._on_props_update,
+            on_restyle=self._on_restyle,
+        )
         self._props.grid(row=0, column=2, sticky="ns", padx=(0, 8), pady=8)
 
     # ---------------------------------------------------------------- actions
@@ -68,12 +75,12 @@ class ScienceGraphApp(ctk.CTk):
                 continue
             ow, oh = img.size
             scale = min(500 / ow, 500 / oh, 1.0)
+            # Place inside page by default
+            px, py = self._canvas.page_x + 20 + offset, self._canvas.page_y + 20 + offset
             elem = Element(
                 uid=new_uid(),
-                x=60 + offset,
-                y=60 + offset,
-                w=ow * scale,
-                h=oh * scale,
+                x=float(px), y=float(py),
+                w=ow * scale, h=oh * scale,
                 image=img,
                 name=Path(path).stem,
                 source_path=Path(path),
@@ -98,15 +105,18 @@ class ScienceGraphApp(ctk.CTk):
         size = result["font_size"]
         color = result["color"]
         try:
-            img = render_latex(text, fontsize=size, color=color) if use_latex \
-                  else render_text(text, fontsize=size, color=color)
+            img = (render_latex(text, fontsize=size, color=color)
+                   if use_latex
+                   else render_text(text, fontsize=size, color=color))
         except Exception as exc:
             messagebox.showerror("Error al renderizar", str(exc))
             return
         ow, oh = img.size
+        px = float(self._canvas.page_x + 20)
+        py = float(self._canvas.page_y + 20)
         elem = Element(
             uid=new_uid(),
-            x=80, y=80,
+            x=px, y=py,
             w=float(ow), h=float(oh),
             image=img,
             name=text[:30],
@@ -122,6 +132,27 @@ class ScienceGraphApp(ctk.CTk):
         self._canvas.toggle_spacing()
         self._toolbar.set_spacing_state(self._canvas.show_spacing)
 
+    def _toggle_collision(self):
+        self._canvas.toggle_collision()
+        self._toolbar.set_collision_state(self._canvas.collision_enabled)
+
+    def _canvas_settings(self):
+        c = self._canvas
+        dlg = CanvasSettingsDialog(self, c.page_w, c.page_h, c.page_bg)
+        self.wait_window(dlg)
+        if dlg.result:
+            c.set_page(dlg.result["w"], dlg.result["h"], dlg.result["bg"])
+
+    def _preview(self):
+        if not self._canvas.elements:
+            messagebox.showwarning("Canvas vacio", "Agrega al menos una imagen.")
+            return
+        try:
+            composite = self._canvas.get_composite(page_only=False)
+            PreviewDialog(self, composite)
+        except Exception as exc:
+            messagebox.showerror("Error", str(exc))
+
     def _copy_style(self):
         if not self._canvas.selected:
             messagebox.showwarning("Sin seleccion", "Selecciona un elemento primero.")
@@ -135,8 +166,14 @@ class ScienceGraphApp(ctk.CTk):
         if not self._canvas.selected:
             messagebox.showwarning("Sin seleccion", "Selecciona un elemento primero.")
             return
-        self._canvas.selected.paste_style(self._clipboard_style)
-        self._canvas.redraw()
+        elem = self._canvas.selected
+        elem.paste_style(self._clipboard_style)
+        # Re-render if text element
+        if elem.is_text:
+            self._on_restyle(elem)
+        else:
+            self._canvas.redraw()
+            self._props.load(elem)
 
     def _export(self):
         if not self._canvas.elements:
@@ -158,7 +195,7 @@ class ScienceGraphApp(ctk.CTk):
             return
 
         try:
-            composite = self._canvas.get_composite()
+            composite = self._canvas.get_composite(page_only=dlg.result["page_only"])
             tw = dlg.result["target_w"]
             th = dlg.result["target_h"]
             if tw and th:
@@ -179,3 +216,27 @@ class ScienceGraphApp(ctk.CTk):
     def _on_props_update(self, element: Element):
         self._canvas.redraw()
         self._props.load(element)
+
+    def _on_restyle(self, element: Element):
+        if not element.is_text:
+            return
+        try:
+            if element.use_latex:
+                img = render_latex(element.text_content,
+                                   fontsize=element.font_size,
+                                   color=element.font_color)
+            else:
+                img = render_text(element.text_content,
+                                  fontsize=element.font_size,
+                                  color=element.font_color,
+                                  font_family=element.font_family,
+                                  bold=element.font_bold,
+                                  italic=element.font_italic)
+            ow, oh = img.size
+            element.image = img
+            element.w = float(ow)
+            element.h = float(oh)
+            self._canvas.redraw()
+            self._props.load(element)
+        except Exception as exc:
+            messagebox.showerror("Error al re-renderizar texto", str(exc))
